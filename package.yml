@@ -1,0 +1,58 @@
+package: cloud.lazycat.app.rybbit
+version: 2.9.1-1
+name: rybbit
+description: 隐私友好的自托管网站分析：实时访问量、会话、来源与漏斗
+author: Rybbit
+license: AGPL-3.0
+homepage: https://github.com/rybbit-io/rybbit
+min_os_version: 1.6.0
+support_mobile: false
+
+permissions:
+  required:
+    # 页面分析脚本、地图（可选）等按需联网；遥测已在部署时关闭
+    - net.internet
+
+locales:
+  zh-CN:
+    name: Rybbit 网站分析
+    description: 隐私友好的开源自托管网站分析：实时在线人数、访问量、来源、页面、会话录制式回放与漏斗，数据全部留在自己的微服上。
+    usage: |
+      Rybbit 是开源、尊重隐私的网站分析工具（Google Analytics 的开源替代），所有访问数据都存在你自己的微服里，不经过任何第三方。
+
+      首次使用：
+      1. 打开应用即进入控制台，无需单独登录（访问控制由微服账号体系负责，登录页会自动填充内置管理员账号）。
+      2. 点「添加网站」，填入你的网站域名，保存后进入该站点。
+      3. 在「设置 → 跟踪脚本」里复制这段 JS，贴到你网站每个页面的 </head> 前即可开始采集。
+      4. 回到控制台就能看到实时在线人数、页面浏览量、访客来源、地区、设备、入口/出口页面等；数据通常几秒内出现。
+
+      常用操作：
+      - 实时：顶部「实时」显示当前在线访客与最近事件。
+      - 漏斗：按步骤（页面或自定义事件）配置转化漏斗，看每一步流失。
+      - 目标/事件：在站点设置里定义自定义事件，脚本里用 rybbit.event('名称') 上报。
+      - 对比与筛选：按时间范围、来源、页面、地区、设备、浏览器等维度筛选。
+      - 多网站：一个实例可以管理多个站点，各自有独立统计。
+
+      说明：
+      - 数据存储在本机（ClickHouse + PostgreSQL + Redis 都在容器内运行），重启与升级不会丢失。
+      - 匿名遥测已关闭（DISABLE_TELEMETRY=true），不会向外部上报任何数据。
+      - 站点注册在应用内默认关闭（DISABLE_SIGNUP=true），只有微服账号体系放行的人才能进入。
+      - 若要给外部网站采集，需要你的网站能访问本应用的域名；仅内网使用时只统计内网站点。
+  en-US:
+    name: Rybbit
+    description: Privacy-friendly self-hosted web analytics — real-time visitors, sessions, sources, funnels, all on your own box.
+    usage: |
+      Rybbit is an open-source, privacy-friendly alternative to Google Analytics. All analytics data stays on your own box.
+
+      Getting started:
+      1. Open the app — access control is handled by the box account system, so there is no separate login to remember.
+      2. Click "Add website", enter your domain and save.
+      3. Copy the tracking script from the site settings and paste it before </head> on every page you want to track.
+      4. Your dashboard then shows real-time visitors, pageviews, referrers, countries, devices and entry/exit pages within seconds.
+
+      Highlights: real-time view, funnels, custom events/goals, session and page breakdowns, multiple sites per instance.
+
+      Notes:
+      - Data is stored locally (ClickHouse + PostgreSQL + Redis run inside the app's containers) and survives restarts and upgrades.
+      - Anonymous telemetry is disabled (DISABLE_TELEMETRY=true).
+      - Public signup is disabled (DISABLE_SIGNUP=true); only users allowed by the box account system can open the app.

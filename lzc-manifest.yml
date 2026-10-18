@@ -1,0 +1,256 @@
+# subdomain 一经发布不可更改：它决定应用的实例标识与数据存储路径。
+# 模板变量：系统参数在 .S 下（.S.AppDomain / .S.BoxDomain …），用户参数在 .U；stable_secret 是函数。
+application:
+  subdomain: rybbit
+  # 前端是 Next.js（3002），后端 API + Socket.IO 在 3001。
+  # 全部用 upstreams（不要混用 routes 的 /= 兜底，否则 /api 会被前端容器先接走 → 404）：
+  # 网关按最长前缀匹配，/api 与 /socket.io 走 backend，其余走 client；disable_trim_location 保留原路径。
+  upstreams:
+    - location: /api/
+      backend: http://backend.cloud.lazycat.app.rybbit.lzcapp:3001
+      disable_trim_location: true
+    - location: /socket.io/
+      backend: http://backend.cloud.lazycat.app.rybbit.lzcapp:3001
+      disable_trim_location: true
+      # 注意：不要开启 fix_websocket_header。网关会额外追加一个 Sec-WebSocket-Key，
+      # 上游会报 WebSocket protocol violation: multiple Sec-WebSocket-Key headers（evcc 已踩过）。
+    - location: /
+      backend: http://client.cloud.lazycat.app.rybbit.lzcapp:3002
+      disable_trim_location: true
+  health_check:
+    # 应用级检测：直接给 http url，不依赖容器内部有 curl/wget
+    test_url: http://client.cloud.lazycat.app.rybbit.lzcapp:3002/
+    start_period: 900s
+    timeout: 10s
+  injects:
+    # 免密登录（bootstrap）：首访时先在浏览器里探测会话；没有会话就用内置凭据调一次
+    # Better Auth 的注册接口（账号已存在时该请求失败、忽略即可），随后刷新页面即已登录。
+    # 凭据来自 stable_secret，每台微服安装时随机生成并固定，用户完全不需要知道或输入。
+    - id: rybbit-bootstrap-login
+      'on': browser
+      auth_required: false
+      # 必须是 /*：Rybbit 前端是 Next.js SPA，打开应用根路径时是**客户端路由**跳到
+      # /login，文档没有重新加载，只在 /login 上匹配的注入永远不会执行
+      # （这就是审核说的「没有免密登陆」）。脚本自己会先查会话，已登录就什么都不做。
+      when:
+        - /*
+      do:
+        - src: |
+            (async () => {
+              const email = "admin@example.com";
+              const password = "{{ stable_secret "rybbit_admin_password" }}";
+              const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+              const hasSession = async () => {
+                try {
+                  const r = await fetch("/api/auth/get-session", { headers: { accept: "application/json" } });
+                  const j = await r.json();
+                  return !!(j && (j.session || j.user));
+                } catch (e) {
+                  return false;
+                }
+              };
+              try {
+                if (await hasSession()) return;
+                await fetch("/api/auth/sign-up/email", {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  body: JSON.stringify({ email, password, name: "admin" }),
+                }).catch(() => null);
+                for (let i = 0; i < 10; i++) {
+                  await sleep(400);
+                  if (await hasSession()) {
+                    location.replace("/");
+                    return;
+                  }
+                }
+              } catch (e) {}
+            })();
+    # 兜底：如果落在注册页，用同一套内置凭据把表单填好并提交
+    - id: rybbit-signup-autofill
+      'on': browser
+      auth_required: false
+      when:
+        - /signup
+        - /signup/*
+      do:
+        - src: builtin://simple-inject-password
+          params:
+            user: 'admin@example.com'
+            password: '{{ stable_secret "rybbit_admin_password" }}'
+            allowNewPassword: true
+            retryCount: 20
+            observerTimeoutMs: 15000
+    # 兜底：登录页表单自动填充（账号已存在时 bootstrap 已直接登录，这里只作保险）
+    - id: rybbit-login-autofill
+      'on': browser
+      auth_required: false
+      # 同上：SPA 客户端路由不会重新加载文档，放宽到 /* 才能在客户端跳转后生效。
+      # builtin 脚本只会在真的出现「用户名+密码」登录表单时才填充提交，其他页面无副作用。
+      when:
+        - /*
+      do:
+        - src: builtin://simple-inject-password
+          params:
+            user: 'admin@example.com'
+            password: '{{ stable_secret "rybbit_admin_password" }}'
+            retryCount: 12
+            observerTimeoutMs: 12000
+
+    # ── 网盘文件拦截（官方《自动拦截文件选择器》专题）──────────────────────────
+    # 1) 同源文件桥接：选择器读写他人共享目录时把 /__lazycat_file_bridge/* 转发到
+    #    当前微服的网盘服务 file.<微服域名>。
+    - id: lazycat-file-bridge
+      'on': request
+      auth_required: false
+      when:
+        - /__lazycat_file_bridge/*
+      do:
+        - src: |
+            const bridgePrefix = "/__lazycat_file_bridge";
+            const requestHost = String(ctx.request.host || "").split(":")[0].toLowerCase();
+            const firstDot = requestHost.indexOf(".");
+            const method = String(ctx.request.method || "").toUpperCase();
+            if (firstDot <= 0 || !requestHost.endsWith(".heiyu.space") ||
+                !["GET", "HEAD", "PUT"].includes(method)) {
+              ctx.response.send(["GET", "HEAD", "PUT"].includes(method) ? 400 : 405,
+                "Invalid LazyCat file bridge request");
+              return;
+            }
+            const boxDomain = requestHost.slice(firstDot + 1);
+            ctx.headers.del("Origin");
+            ctx.headers.del("Referer");
+            ctx.proxy.to("https://file." + boxDomain, {
+              path: "/files/home" + ctx.request.path.slice(bridgePrefix.length),
+              query: ctx.request.raw_query,
+              use_target_host: true,
+              timeout_ms: 120000,
+              on_fail: "error",
+            });
+    # 2) 统一「打开 / 保存」窗口：接管 input[type=file]、showOpen/SaveFilePicker 与
+    #    带 download 的 blob:/data: 锚点。
+    - id: open-save-chooser
+      'on': browser
+      auth_required: false
+      when:
+        - /*
+      do:
+        - src: >-
+            file:///lzcapp/pkg/content/lazycat-injects/lzc-file-chooser-inject.js
+          params:
+            diskRoot: /_lzc/files/home
+            fileBridgeRoot: /__lazycat_file_bridge
+            fallbackMime: application/octet-stream
+            locale: auto
+            hooks:
+              fileSystemAccess: true
+              fileInput: true
+              downloadAnchor: true
+    # 3) 补接「同源普通 HTTP 下载」：官方钩子只认 blob:/data: 锚点，应用里直接指向
+    #    自身后端的下载（导出 CSV / 下载日志等）不补接就会走浏览器原生下载、不进网盘。
+    - id: rybbit_http_download_bridge
+      'on': browser
+      auth_required: false
+      when:
+        - /*
+      do:
+        - src: file:///lzcapp/pkg/content/lazycat-injects/rybbit-http-download-bridge.js
+
+services:
+  # 分析数据仓库。ClickHouse 默认只监听 localhost，必须挂 network.xml 打开 0.0.0.0，
+  # 否则后端连不上（上游 compose 也是这么做的）。
+  clickhouse:
+    image: registry.lazycat.cloud/wans/clickhouse/clickhouse-server:23735b425599c628
+    environment:
+      - CLICKHOUSE_DB=analytics
+      - CLICKHOUSE_USER=default
+      - CLICKHOUSE_PASSWORD={{ stable_secret "rybbit_clickhouse_password" }}
+      # 让后端在启动时用 SQL 建最小权限的 rybbit_query 用户
+      - CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1
+    binds:
+      - /lzcapp/var/clickhouse:/var/lib/clickhouse
+      - /lzcapp/pkg/content/clickhouse/network.xml:/etc/clickhouse-server/config.d/network.xml
+      - /lzcapp/pkg/content/clickhouse/logging_rules.xml:/etc/clickhouse-server/config.d/logging_rules.xml
+      - /lzcapp/pkg/content/clickhouse/resource_limits.xml:/etc/clickhouse-server/config.d/resource_limits.xml
+      - /lzcapp/pkg/content/clickhouse/user_settings.xml:/etc/clickhouse-server/users.d/user_settings.xml
+    healthcheck:
+      # 审核驳回 #20208「启动报错」的直接原因：后端在 ClickHouse 还没可用时就启动，
+      # 初始化失败后进程退出（附件截图里 backend: exited）。这里给 ClickHouse 一个真实可用的
+      # 健康检查，再由 backend 的 depends_on 等它 healthy。
+      test:
+        - CMD-SHELL
+        - wget -q -O- http://127.0.0.1:8123/ping | grep -q Ok
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 300s
+
+  postgres:
+    image: registry.lazycat.cloud/wans/library/postgres:d82be530442e1ca2
+    environment:
+      - POSTGRES_USER=rybbit
+      - POSTGRES_PASSWORD={{ stable_secret "rybbit_postgres_password" }}
+      - POSTGRES_DB=analytics
+    binds:
+      - /lzcapp/var/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U rybbit -d analytics
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 180s
+
+  redis:
+    image: registry.lazycat.cloud/wans/library/redis:46dd7c0997b15d0c
+    # command 必须是字符串（写数组平台安装会 400，而 project lint 不报）
+    command: 'redis-server --requirepass {{ stable_secret "rybbit_redis_password" }} --appendonly yes --appendfsync everysec --maxmemory-policy noeviction'
+    binds:
+      - /lzcapp/var/redis:/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - redis-cli -a '{{ stable_secret "rybbit_redis_password" }}' --no-auth-warning ping | grep -q PONG
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 120s
+
+  backend:
+    image: registry.lazycat.cloud/wans/rybbit-io/rybbit-backend:b82934f40ace2d10
+    # 等三个存储都真正 healthy 再启动（平台会等 depends_on 里的服务进入 healthy）。
+    # 旧版没有这道门：ClickHouse 首次启动要建系统表，慢机器上后端先起来 → ECONNREFUSED
+    # → "Primary process failed during database initialization" → 后端退出，评审看到「启动报错」。
+    depends_on:
+      - clickhouse
+      - postgres
+      - redis
+    environment:
+      - NODE_ENV=production
+      # 同一应用网络内用服务短名（getent hosts postgres 已验证可解析）
+      - CLICKHOUSE_HOST=http://clickhouse:8123
+      - CLICKHOUSE_DB=analytics
+      - CLICKHOUSE_PASSWORD={{ stable_secret "rybbit_clickhouse_password" }}
+      - CLICKHOUSE_QUERY_PASSWORD={{ stable_secret "rybbit_clickhouse_password" }}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=analytics
+      - POSTGRES_USER=rybbit
+      - POSTGRES_PASSWORD={{ stable_secret "rybbit_postgres_password" }}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD={{ stable_secret "rybbit_redis_password" }}
+      - BETTER_AUTH_SECRET={{ stable_secret "rybbit_auth_secret" }}
+      - BETTER_AUTH_URL=https://{{ .S.AppDomain }}
+      - BASE_URL=https://{{ .S.AppDomain }}
+      # 匿名遥测关闭；注册保持可用，以便首访时用内置凭据自动注册管理员（应用本身仍在微服账号体系之后）
+      - DISABLE_TELEMETRY=true
+      - DISABLE_SIGNUP=false
+      - CLUSTER_WORKERS=2
+
+  client:
+    image: registry.lazycat.cloud/wans/rybbit-io/rybbit-client:63a5359cc66b9583
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_BACKEND_URL=https://{{ .S.AppDomain }}
+      - NEXT_PUBLIC_DISABLE_SIGNUP=false
