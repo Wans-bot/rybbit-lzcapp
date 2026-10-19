@@ -1,5 +1,5 @@
 package: cloud.lazycat.app.rybbit
-version: 2.9.1-1
+version: 2.9.1
 name: rybbit
 description: 隐私友好的自托管网站分析：实时访问量、会话、来源与漏斗
 author: Rybbit
@@ -7,12 +7,10 @@ license: AGPL-3.0
 homepage: https://github.com/rybbit-io/rybbit
 min_os_version: 1.6.0
 support_mobile: false
-
 permissions:
   required:
     # 页面分析脚本、地图（可选）等按需联网；遥测已在部署时关闭
     - net.internet
-
 locales:
   zh-CN:
     name: Rybbit 网站分析

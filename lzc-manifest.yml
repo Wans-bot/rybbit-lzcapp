@@ -95,7 +95,6 @@ application:
             password: '{{ stable_secret "rybbit_admin_password" }}'
             retryCount: 12
             observerTimeoutMs: 12000
-
     # ── 网盘文件拦截（官方《自动拦截文件选择器》专题）──────────────────────────
     # 1) 同源文件桥接：选择器读写他人共享目录时把 /__lazycat_file_bridge/* 转发到
     #    当前微服的网盘服务 file.<微服域名>。
@@ -154,7 +153,6 @@ application:
         - /*
       do:
         - src: file:///lzcapp/pkg/content/lazycat-injects/rybbit-http-download-bridge.js
-
 services:
   # 分析数据仓库。ClickHouse 默认只监听 localhost，必须挂 network.xml 打开 0.0.0.0，
   # 否则后端连不上（上游 compose 也是这么做的）。
@@ -183,7 +181,6 @@ services:
       timeout: 5s
       retries: 60
       start_period: 300s
-
   postgres:
     image: registry.lazycat.cloud/wans/library/postgres:d82be530442e1ca2
     environment:
@@ -200,7 +197,6 @@ services:
       timeout: 5s
       retries: 30
       start_period: 180s
-
   redis:
     image: registry.lazycat.cloud/wans/library/redis:46dd7c0997b15d0c
     # command 必须是字符串（写数组平台安装会 400，而 project lint 不报）
@@ -215,8 +211,8 @@ services:
       timeout: 5s
       retries: 30
       start_period: 120s
-
   backend:
+    # upstream: ghcr.io/rybbit-io/rybbit-backend:v2.9.1
     image: registry.lazycat.cloud/wans/rybbit-io/rybbit-backend:b82934f40ace2d10
     # 等三个存储都真正 healthy 再启动（平台会等 depends_on 里的服务进入 healthy）。
     # 旧版没有这道门：ClickHouse 首次启动要建系统表，慢机器上后端先起来 → ECONNREFUSED
@@ -247,7 +243,6 @@ services:
       - DISABLE_TELEMETRY=true
       - DISABLE_SIGNUP=false
       - CLUSTER_WORKERS=2
-
   client:
     image: registry.lazycat.cloud/wans/rybbit-io/rybbit-client:63a5359cc66b9583
     environment:
