@@ -212,8 +212,8 @@ services:
       retries: 30
       start_period: 120s
   backend:
-    # upstream: ghcr.io/rybbit-io/rybbit-backend:v2.9.1
-    image: registry.lazycat.cloud/wans/rybbit-io/rybbit-backend:b82934f40ace2d10
+    # upstream: ghcr.io/rybbit-io/rybbit-backend:v2.9.2
+    image: registry.lazycat.cloud/wans/rybbit-io/rybbit-backend:38e7e67ef5227949
     # 等三个存储都真正 healthy 再启动（平台会等 depends_on 里的服务进入 healthy）。
     # 旧版没有这道门：ClickHouse 首次启动要建系统表，慢机器上后端先起来 → ECONNREFUSED
     # → "Primary process failed during database initialization" → 后端退出，评审看到「启动报错」。

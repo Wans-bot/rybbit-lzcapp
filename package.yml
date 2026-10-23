@@ -1,5 +1,5 @@
 package: cloud.lazycat.app.rybbit
-version: 2.9.1
+version: 2.9.2
 name: rybbit
 description: 隐私友好的自托管网站分析：实时访问量、会话、来源与漏斗
 author: Rybbit
